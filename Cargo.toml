@@ -1,0 +1,17 @@
+[package]
+edition = "2018"
+name = "populate-crate-metadata"
+version = "0.1.0"
+
+[features]
+default = ["capture-spantrace"]
+capture-spantrace = ["tracing", "tracing-error", "tracing-subscriber", "color-eyre/capture-spantrace"]
+
+[dependencies]
+color-eyre = "0.5"
+thiserror = "1.0.19"
+tracing = { version = "0.1.13", optional = true }
+tracing-subscriber = { version = "0.2.5", optional = true }
+tracing-error = { version = "0.1.2", optional = true }
+
+cratesio-dbdump-csvtab = { version = "0.2", path = "../cratesio-dbdump-csvtab"}
