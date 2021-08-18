@@ -22,9 +22,9 @@ fn main() -> Result<(), Report> {
     info!("Get all of the latest version's dev-dependencies: {:?}", get_latest_dependencies(&db, "bevy".to_string(),DependencyType::Dev)?);
     info!("Get all of the latest version's normal dependencies: {:?}", get_latest_dependencies(&db, "bevy".to_string(),DependencyType::Normal)?);
 
-    info!("Get rev dependencies: {:?}", get_bevy_plugins(&db)?);
+    info!("Get bevy plugins (based on suffix): {:?}", get_bevy_plugins(&db)?);
 
-    info!("Get big dependencies: {:?}", get_rev_dependencies(&db, "bevy_egui")?);
+    info!("Get rev dependencies: {:?}", get_rev_dependencies(&db, "bevy_egui")?);
 
     /*
     let bevy_crates = get_bevy_crates(&db)?;
