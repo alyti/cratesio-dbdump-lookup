@@ -17,6 +17,7 @@ fn main() -> Result<(), Report> {
         .update()?
         .open_db()?;
         
+    info!("Get crate by name: {:?}", get_crate_by_name(&db, "bevy")?);
     info!("Get Latest with bevy as crate: {:?}", get_latest(&db, "bevy".to_string())?);
     info!("Get all of the latest version's dependencies: {:?}", get_latest_dependencies(&db, "bevy".to_string(),DependencyType::All)?);
     info!("Get all of the latest version's dev-dependencies: {:?}", get_latest_dependencies(&db, "bevy".to_string(),DependencyType::Dev)?);
@@ -26,17 +27,6 @@ fn main() -> Result<(), Report> {
 
     info!("Get rev dependencies: {:?}", get_rev_dependencies(&db, "bevy_egui")?);
 
-    /*
-    let bevy_crates = get_bevy_crates(&db)?;
-
-     
-    info!("Bevy's crate id: {:?}", &bevy_crates);
-
-    let bevy_plugins = get_rev_dependencies(&db)?;
-    info!("Bevy plugins crate id: {:?}", &bevy_plugins);
-
-
-    */
     Ok(())
 }
 
@@ -80,6 +70,8 @@ enum DependencyType {
     All,
 }
 
+//Takes  : version.id 
+//Returns: dependencies.id, crates.name
 fn get_dependencies(db: &Connection, version_id: &str, d_type: DependencyType) -> Result<Vec<(String, String)>, rusqlite::Error>{
     let sql_str = r#"
         SELECT dependencies.id, crates.name
@@ -120,6 +112,7 @@ fn get_dependencies(db: &Connection, version_id: &str, d_type: DependencyType) -
     Ok(dependencies)
 }
 
+//Returns: dependencies.id, crates.name
 fn get_bevy_plugins(db: &Connection) -> Result<Vec<(String, String)>, rusqlite::Error> {
     /*let latest = get_latest(db,"bevy".to_string())?;
     let version_id: &str = latest.last().unwrap().0.as_ref();
@@ -154,6 +147,8 @@ fn get_bevy_plugins(db: &Connection) -> Result<Vec<(String, String)>, rusqlite::
     //Ok(lat_deps)
 }
 
+//Takes  : crate.name 
+//Returns: crate.id, crates.name
 fn get_crate_by_name(db: &Connection, crate_name: &str) -> Result<Vec<(String, String)>, rusqlite::Error> {
     let mut s = db.prepare_cached("SELECT id, name FROM crates WHERE name = ?")?;
     let rows = s.query_and_then(
