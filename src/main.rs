@@ -23,15 +23,18 @@ fn main() -> Result<(), Report> {
     info!("Get all of the latest version's dev-dependencies: {:?}", get_latest_dependencies(&db, "bevy".to_string(),DependencyType::Dev)?);
     info!("Get all of the latest version's normal dependencies: {:?}", get_latest_dependencies(&db, "bevy".to_string(),DependencyType::Normal)?);
 
-    info!("Get bevy plugins (based on suffix): {:?}", get_bevy_plugins(&db)?);
+    info!("Get bevy plugins (based on suffix): {:?}", get_bevy_plugins_naive(&db)?);
 
-    info!("Get rev dependencies: {:?}", get_rev_dependencies(&db, "bevy_egui")?);
+    info!("Get rev dependencies: {:?}", get_rev_dependency(&db, "bevy_egui", "bevy")?);
+
+    info!("Get rev dependencies 2: {:?}", get_rev_dependency(&db, "quote", "bevy")?);
 
     Ok(())
 }
 
 //Takes  : crate_name 
 //Returns: version_id,version number
+#[instrument]
 fn get_latest(db: &Connection, crate_name: String) -> Result<Vec<(String, String)>, rusqlite::Error>{
     let mut stmt = db.prepare_cached(
         r#"
@@ -56,6 +59,7 @@ fn get_latest(db: &Connection, crate_name: String) -> Result<Vec<(String, String
     Ok(latest)
 }
 
+#[instrument]
 fn get_latest_dependencies(db: &Connection, crate_name: String, d_type: DependencyType) -> Result<Vec<(String, String)>, rusqlite::Error>{
     let latest = get_latest(db, crate_name)?;
     let version_id: &str = latest.last().unwrap().0.as_ref();
@@ -63,7 +67,7 @@ fn get_latest_dependencies(db: &Connection, crate_name: String, d_type: Dependen
 }
 
 
-#[derive(PartialEq)]
+#[derive(PartialEq, Debug)]
 enum DependencyType {
     Normal,
     Dev,
@@ -72,6 +76,7 @@ enum DependencyType {
 
 //Takes  : version.id 
 //Returns: dependencies.id, crates.name
+#[instrument]
 fn get_dependencies(db: &Connection, version_id: &str, d_type: DependencyType) -> Result<Vec<(String, String)>, rusqlite::Error>{
     let sql_str = r#"
         SELECT dependencies.id, crates.name
@@ -113,7 +118,8 @@ fn get_dependencies(db: &Connection, version_id: &str, d_type: DependencyType) -
 }
 
 //Returns: dependencies.id, crates.name
-fn get_bevy_plugins(db: &Connection) -> Result<Vec<(String, String)>, rusqlite::Error> {
+#[instrument]
+fn get_bevy_plugins_naive(db: &Connection) -> Result<Vec<(String, String)>, rusqlite::Error> {
     /*let latest = get_latest(db,"bevy".to_string())?;
     let version_id: &str = latest.last().unwrap().0.as_ref();
     let ds = get_dependencies(db,version_id,DependencyType::Normal)?;
@@ -125,7 +131,7 @@ fn get_bevy_plugins(db: &Connection) -> Result<Vec<(String, String)>, rusqlite::
         FROM dependencies 
         LEFT JOIN crates
             ON dependencies.crate_id = crates.id 
-        WHERE crates.name like 'bevy_%'
+        WHERE crates.name like '%bevy%'
         GROUP BY crates.name
     "#,
     )?;
@@ -149,6 +155,7 @@ fn get_bevy_plugins(db: &Connection) -> Result<Vec<(String, String)>, rusqlite::
 
 //Takes  : crate.name 
 //Returns: crate.id, crates.name
+#[instrument]
 fn get_crate_by_name(db: &Connection, crate_name: &str) -> Result<Vec<(String, String)>, rusqlite::Error> {
     let mut s = db.prepare_cached("SELECT id, name FROM crates WHERE name = ?")?;
     let rows = s.query_and_then(
@@ -163,9 +170,15 @@ fn get_crate_by_name(db: &Connection, crate_name: &str) -> Result<Vec<(String, S
     Ok(bevy_crates)
 }
 
-fn get_rev_dependencies(db: &Connection, crate_name: &str) -> Result<Vec<Result<(String, String, String, String, Result<Vec<(String, String)>, cratesio_dbdump_csvtab::rusqlite::Error>), cratesio_dbdump_csvtab::rusqlite::Error>>, cratesio_dbdump_csvtab::rusqlite::Error>{
-    let bevy_crates = get_bevy_crates(&db)?;
-    let mut main_crate_metadata = db.prepare(
+//Takes  : crate.name 
+//Returns: crate.id,crate.name,crate.license,crate.latest_version,[bevy_versions_of_crate]
+#[instrument]
+fn get_rev_dependency(db: &Connection, crate_name: &str, expected_crate_dep_name: &str) -> Result<Vec<Result<(String, String, String, String, Result<Vec<(String, String)>, cratesio_dbdump_csvtab::rusqlite::Error>), cratesio_dbdump_csvtab::rusqlite::Error>>, cratesio_dbdump_csvtab::rusqlite::Error>{
+    //Get just the bevy crate
+    let expected_crate = get_crate_by_name(&db, expected_crate_dep_name)?;
+    //Get all bevy engine crates
+    //let bevy_crate = get_bevy_crates(&db)?;
+    let mut latest_crate = db.prepare(
         r#"
         SELECT crates.id, crates.name, versions.license, versions.num, versions.id 
         FROM versions LEFT JOIN crates 
@@ -175,7 +188,7 @@ fn get_rev_dependencies(db: &Connection, crate_name: &str) -> Result<Vec<Result<
         LIMIT 1
         "#,
     )?;
-    let row = main_crate_metadata.query_map(
+    let row = latest_crate.query_map(
         // [vec!["bevy_prototype_lyon", "bevy_egui", "bevy_webgl2"]],
         [crate_name],
         |r| {
@@ -184,7 +197,7 @@ fn get_rev_dependencies(db: &Connection, crate_name: &str) -> Result<Vec<Result<
                 r.get_unwrap::<_, String>(1),
                 r.get_unwrap::<_, String>(2),
                 r.get_unwrap::<_, String>(3),
-                get_bevy_versions_for_crate(&db, &r.get_unwrap::<_, String>(0), &r.get_unwrap::<_, String>(4), &bevy_crates)
+                get_bevy_versions_for_crate(&db, &r.get_unwrap::<_, String>(0), &r.get_unwrap::<_, String>(4), &expected_crate)
             ))
         },
     )?;

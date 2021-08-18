@@ -14,4 +14,4 @@ tracing = { version = "0.1.13", optional = true }
 tracing-subscriber = { version = "0.2.5", optional = true }
 tracing-error = { version = "0.1.2", optional = true }
 
-cratesio-dbdump-csvtab = { version = "0.2", path = "../cratesio-dbdump-csvtab"}
+cratesio-dbdump-csvtab = { version = "0.2.2" }#, path = "../cratesio-dbdump-csvtab"}
