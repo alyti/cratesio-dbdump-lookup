@@ -1,7 +1,9 @@
-use cratesio_dbdump_csvtab::rusqlite::{self, Connection, Error as SqliteError};
+use rusqlite::{self, Connection, Error as SqliteError};
 use std::num::ParseIntError;
 use tracing::instrument;
 use thiserror::Error;
+use serde::Serialize;
+
 
 #[derive(Error, Debug)]
 pub enum Error {
@@ -276,9 +278,9 @@ pub fn get_rev_dependency(
     db: &Connection, crate_name: &str, expected_crate_dep_name: &str,
 ) -> Result<
     Vec<
-        Result<(String,String,String,String,Result<Vec<(String, String)>, cratesio_dbdump_csvtab::rusqlite::Error>,),cratesio_dbdump_csvtab::rusqlite::Error,>,
+        Result<(String,String,String,String,Result<Vec<(String, String)>, rusqlite::Error>,),rusqlite::Error,>,
     >,
-    cratesio_dbdump_csvtab::rusqlite::Error,
+    rusqlite::Error,
 > {
     //Get just the bevy crate
     let expected_crate = get_crate_by_name(db, expected_crate_dep_name)?;
@@ -321,8 +323,8 @@ pub fn get_rev_dependency(
 pub fn crate_list_get_rev_dependency(
     db: &Connection, crate_names: Vec<&str>, expected_crate_dep_name: &str,
 ) -> Result<
-    Vec<Vec<Result<(String,String,String,String,Result<Vec<(String, String)>, cratesio_dbdump_csvtab::rusqlite::Error>,),cratesio_dbdump_csvtab::rusqlite::Error,>,>,>,
-    cratesio_dbdump_csvtab::rusqlite::Error,
+    Vec<Vec<Result<(String,String,String,String,Result<Vec<(String, String)>, rusqlite::Error>,),rusqlite::Error,>,>,>,
+    rusqlite::Error,
 > {
     let mut bevy_crates = Vec::new();
     for crate_name in crate_names.iter() {
@@ -387,7 +389,7 @@ pub fn get_versions_for_crate(
     Ok(mvbv)
 }
 
-#[derive(Default, Debug, serde::Serialize)]
+#[derive(Default, Debug, Serialize)]
 pub struct Crate {
     pub crate_id: String,
     pub keywords: Vec<String>,
@@ -400,7 +402,7 @@ pub struct Crate {
     pub dependencies: Vec<CrateDependency>,
 }
 
-#[derive(PartialEq, Debug, Clone, serde::Serialize)]
+#[derive(PartialEq, Debug, Clone, Serialize)]
 pub enum DependencyKind {
     Normal,
     Dev,
@@ -431,7 +433,7 @@ impl Parse for DependencyKind {
     }
 }
 
-#[derive(Default, Debug, Clone, serde::Serialize)]
+#[derive(Default, Debug, Clone, Serialize)]
 pub struct CrateDependency {
     pub crate_id: String,
     pub version: String,

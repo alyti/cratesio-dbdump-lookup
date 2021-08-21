@@ -259,10 +259,11 @@ dependencies = [
 
 [[package]]
 name = "cratesio-dbdump-lookup"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "color-eyre",
  "cratesio-dbdump-csvtab",
+ "rusqlite",
  "serde",
  "thiserror",
  "tracing",

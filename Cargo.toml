@@ -1,6 +1,6 @@
 [package]
 name = "cratesio-dbdump-lookup"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2018"
 authors = ["Alyssa Awoo <alticodes@gmail.com>", "Mikkel Rasmussen <theluja@gmail.com>"]
 documentation = "http://docs.rs/cratesio-dbdump-lookup"
@@ -11,16 +11,17 @@ repository = "https://github.com/alyti/cratesio-dbdump-lookup"
 description = "utility trait for rusqlite connection for working with crates.io dbdump data"
 
 [features]
-default = ["capture-spantrace"]
-capture-spantrace = ["tracing", "color-eyre/capture-spantrace"]
+default = ["trace"]
+trace = ["tracing"]
 
 [dependencies]
 thiserror = "1.0.19"
 tracing = { version = "0.1.13", optional = true }
-cratesio-dbdump-csvtab = { version = "0.2.2" }
 serde = { version = "1", features = [ "derive" ] }
+rusqlite = { features = ["bundled", "csvtab"], version = "0.25.1" }
 
 [dev-dependencies]
 color-eyre = "0.5"
 tracing-subscriber = { version = "0.2.5"}
 tracing-error = { version = "0.1.2"}
+cratesio-dbdump-csvtab = { version = "0.2.2" }

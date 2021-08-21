@@ -8,7 +8,7 @@ use cratesio_dbdump_lookup::{
 use tracing::info;
 
 fn main() -> Result<(), Report> {
-    #[cfg(feature = "capture-spantrace")]
+    #[cfg(feature = "trace")]
     install_tracing();
 
     color_eyre::install()?;
@@ -79,7 +79,7 @@ fn main() -> Result<(), Report> {
     Ok(())
 }
 
-#[cfg(feature = "capture-spantrace")]
+#[cfg(feature = "trace")]
 pub fn install_tracing() {
     use tracing_error::ErrorLayer;
     use tracing_subscriber::prelude::*;
