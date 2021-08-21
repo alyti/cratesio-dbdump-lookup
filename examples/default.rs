@@ -2,8 +2,8 @@ use color_eyre::eyre::Report;
 use cratesio_dbdump_csvtab::CratesIODumpLoader;
 use cratesio_dbdump_lookup::DependencyType;
 use cratesio_dbdump_lookup::{
-    crate_list_get_rev_dependency, get_bevy_plugins_naive, get_crate_by_name, get_latest,
-    get_latest_dependencies, get_rev_dependency, CrateFetcher,
+    crate_list_get_rev_dependency, get_bevy_plugins_naive, get_crate_by_name, get_versions,
+    get_latest_dependencies, get_rev_dependency, CrateLookup,
 };
 use tracing::info;
 
@@ -29,8 +29,12 @@ fn main() -> Result<(), Report> {
 
     info!("Get crate by name: {:?}", get_crate_by_name(&db, "bevy")?);
     info!(
-        "Get Latest with bevy as crate: {:?}",
-        get_latest(&db, "bevy".to_string())?
+        "Get latest version with bevy as crate: {:?}",
+        get_versions(&db, "bevy".to_string(), true)?
+    );
+    info!(
+        "Get all versions with bevy as crate: {:?}",
+        get_versions(&db, "bevy".to_string(), false)?
     );
     info!(
         "Get all of the latest version's dependencies: {:?}",

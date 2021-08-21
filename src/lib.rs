@@ -2,15 +2,15 @@ use cratesio_dbdump_csvtab::rusqlite::{self, Connection, Error};
 use std::num::ParseIntError;
 use tracing::instrument;
 
-pub trait CrateFetcher {
+pub trait CrateLookup {
     fn get_crate(&self, crate_name: &str) -> Result<Option<Crate>, rusqlite::Error>;
     fn get_keywords(&self, crate_id: &str) -> Result<Vec<String>, rusqlite::Error>;
 }
 
-impl CrateFetcher for Connection {
+impl CrateLookup for Connection {
     fn get_crate(&self, crate_name: &str) -> Result<Option<Crate>, rusqlite::Error> {
         //Version id, Version num
-        let versions = get_latest(self, crate_name.to_string())?;
+        let versions = get_versions(self, crate_name.to_string(), false)?;
         let version = versions.last();
         if version.is_none() {
             return Err(Error::InvalidQuery);
@@ -32,7 +32,8 @@ impl CrateFetcher for Connection {
             ))
         })?;
 
-        let v3 = dep_version_result
+        //Name, Version, Kind(Normal/Dev)
+        let dependencies_n_v_k = dep_version_result
             .filter(|f| f.is_ok())
             .map(|f| f.unwrap())
             .collect::<Vec<(String, String, String)>>();
@@ -54,7 +55,7 @@ impl CrateFetcher for Connection {
             ))
         })?;
 
-        let dependencies = v3
+        let dependencies = dependencies_n_v_k
             .iter()
             .map(|f| CrateDependency {
                 crate_id: f.0.clone(),
@@ -62,6 +63,11 @@ impl CrateFetcher for Connection {
                 kind: DependencyKind::parse(f.2.clone()),
             })
             .collect::<Vec<CrateDependency>>();
+
+        let mapped_versions  = versions
+            .iter()
+            .map(|f| f.1.clone())
+            .collect::<Vec<String>>();
 
         let fetched_crate_list = crate_info_result
             .filter(|f| f.is_ok())
@@ -75,7 +81,7 @@ impl CrateFetcher for Connection {
                 last_update: f.6,
                 keywords: f.7,
                 dependencies: dependencies.clone(),
-                versions: vec![],
+                versions: mapped_versions.clone(),
             });
         Ok(fetched_crate_list.into_iter().last())
     }
@@ -98,20 +104,29 @@ impl CrateFetcher for Connection {
 //Takes  : crate_name
 //Returns: version_id,version number
 #[instrument]
-pub fn get_latest(
+pub fn get_versions(
     db: &Connection,
     crate_name: String,
+    latest: bool,
 ) -> Result<Vec<(String, String)>, rusqlite::Error> {
-    let mut stmt = db.prepare_cached(
-        r#"
+    let mut q = r#"
         SELECT versions.id, versions.num
         FROM versions 
         LEFT JOIN crates
             ON versions.crate_id = crates.id 
         WHERE crates.name = ?
+    "#.to_string();
+
+    if latest{
+        q = q.to_string() +
+        r#"
         ORDER BY versions.num DESC
         LIMIT 1
-    "#,
+        "#
+    }
+
+    let mut stmt = db.prepare_cached(
+        &q,
     )?;
 
     let latest_crates = stmt.query_and_then(
@@ -133,7 +148,7 @@ pub fn get_latest_dependencies(
     crate_name: String,
     d_type: DependencyType,
 ) -> Result<Vec<(String, String)>, rusqlite::Error> {
-    let latest = get_latest(db, crate_name)?;
+    let latest = get_versions(db, crate_name, true)?;
     let version_id: &str = latest.last().unwrap().0.as_ref();
     get_dependencies(db, version_id, d_type)
 }
