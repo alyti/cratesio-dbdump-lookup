@@ -1,19 +1,29 @@
-use cratesio_dbdump_csvtab::rusqlite::{self, Connection, Error};
+use cratesio_dbdump_csvtab::rusqlite::{self, Connection, Error as SqliteError};
 use std::num::ParseIntError;
 use tracing::instrument;
+use thiserror::Error;
+
+#[derive(Error, Debug)]
+pub enum Error {
+    #[error("lookup query error")]
+    LookupError(#[from] SqliteError),
+
+    #[error("unknown crate {0} (no versions available)")]
+    UnknownCrate(String)
+}
 
 pub trait CrateLookup {
-    fn get_crate(&self, crate_name: &str) -> Result<Option<Crate>, rusqlite::Error>;
-    fn get_keywords(&self, crate_id: &str) -> Result<Vec<String>, rusqlite::Error>;
+    fn get_crate(&self, crate_name: &str) -> Result<Option<Crate>, Error>;
+    fn get_keywords(&self, crate_id: &str) -> Result<Vec<String>, Error>;
 }
 
 impl CrateLookup for Connection {
-    fn get_crate(&self, crate_name: &str) -> Result<Option<Crate>, rusqlite::Error> {
+    fn get_crate(&self, crate_name: &str) -> Result<Option<Crate>, Error> {
         //Version id, Version num
         let versions = get_versions(self, crate_name.to_string(), false)?;
         let version = versions.last();
         if version.is_none() {
-            return Err(Error::InvalidQuery);
+            return Err(Error::UnknownCrate(crate_name.to_string()));
         }
         let version_id = &version.unwrap().0;
 
@@ -86,7 +96,7 @@ impl CrateLookup for Connection {
         Ok(fetched_crate_list.into_iter().last())
     }
 
-    fn get_keywords(&self, crate_id: &str) -> Result<Vec<String>, rusqlite::Error> {
+    fn get_keywords(&self, crate_id: &str) -> Result<Vec<String>, Error> {
         let mut keywords_q = self.prepare_cached(
             "SELECT keywords.keyword 
                 FROM keywords 
@@ -96,7 +106,7 @@ impl CrateLookup for Connection {
         )?;
         let keywords_result = keywords_q
             .query_map([crate_id], |r| r.get::<_, String>(0))?
-            .collect();
+            .collect::<Result<Vec<String>, SqliteError>>().map_err(|e| Error::LookupError(e));
         keywords_result
     }
 }
@@ -377,7 +387,7 @@ pub fn get_versions_for_crate(
     Ok(mvbv)
 }
 
-#[derive(Default, Debug)]
+#[derive(Default, Debug, serde::Serialize)]
 pub struct Crate {
     pub crate_id: String,
     pub keywords: Vec<String>,
@@ -390,7 +400,7 @@ pub struct Crate {
     pub dependencies: Vec<CrateDependency>,
 }
 
-#[derive(PartialEq, Debug, Clone)]
+#[derive(PartialEq, Debug, Clone, serde::Serialize)]
 pub enum DependencyKind {
     Normal,
     Dev,
@@ -421,7 +431,7 @@ impl Parse for DependencyKind {
     }
 }
 
-#[derive(Default, Debug, Clone)]
+#[derive(Default, Debug, Clone, serde::Serialize)]
 pub struct CrateDependency {
     pub crate_id: String,
     pub version: String,

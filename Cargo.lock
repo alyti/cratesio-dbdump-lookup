@@ -263,6 +263,7 @@ version = "0.1.0"
 dependencies = [
  "color-eyre",
  "cratesio-dbdump-csvtab",
+ "serde",
  "thiserror",
  "tracing",
  "tracing-error",
