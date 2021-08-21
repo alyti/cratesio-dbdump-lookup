@@ -1,7 +1,7 @@
 use color_eyre::eyre::Report;
 use cratesio_dbdump_csvtab::CratesIODumpLoader;
-use populate_crate_metadata::DependencyType;
-use populate_crate_metadata::{
+use cratesio_dbdump_lookup::DependencyType;
+use cratesio_dbdump_lookup::{
     crate_list_get_rev_dependency, get_bevy_plugins_naive, get_crate_by_name, get_latest,
     get_latest_dependencies, get_rev_dependency, CrateFetcher,
 };
