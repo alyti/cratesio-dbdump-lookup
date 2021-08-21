@@ -1,13 +1,106 @@
-use color_eyre::{eyre::Report, eyre::WrapErr, Section};
 use cratesio_dbdump_csvtab::rusqlite::{self, Connection, Error};
-use tracing::{info, instrument};
+use std::num::ParseIntError;
+use tracing::instrument;
+
+pub trait CrateFetcher {
+    fn get_crate(&self, crate_name: &str) -> Result<Option<Crate>, rusqlite::Error>;
+    fn get_keywords(&self, crate_id: &str) -> Result<Vec<String>, rusqlite::Error>;
+}
+
+impl CrateFetcher for Connection {
+    fn get_crate(&self, crate_name: &str) -> Result<Option<Crate>, rusqlite::Error> {
+        //Version id, Version num
+        let versions = get_latest(self, crate_name.to_string())?;
+        let version = versions.last();
+        if version.is_none() {
+            return Err(Error::InvalidQuery);
+        }
+        let version_id = &version.unwrap().0;
+
+        let mut dep_version_q = self.prepare_cached(
+            "SELECT crates.name, dependencies.req, dependencies.kind
+            FROM dependencies
+            LEFT JOIN crates
+                ON crates.id = dependencies.crate_id 
+            WHERE dependencies.version_id = ?",
+        )?;
+        let dep_version_result = dep_version_q.query_map([version_id], |r| {
+            Ok((
+                r.get_unwrap::<_, String>(0),
+                r.get_unwrap::<_, String>(1),
+                r.get_unwrap::<_, String>(2),
+            ))
+        })?;
+
+        let v3 = dep_version_result
+            .filter(|f| f.is_ok())
+            .map(|f| f.unwrap())
+            .collect::<Vec<(String, String, String)>>();
+
+        let mut crate_info_q = self.prepare_cached(
+            "SELECT id, name, description, downloads, homepage, repository, updated_at FROM crates WHERE name = ?",
+        )?;
+        let crate_info_result = crate_info_q.query_map([crate_name], |r| {
+            Ok((
+                r.get_unwrap::<_, String>(0),
+                r.get_unwrap::<_, String>(1),
+                r.get_unwrap::<_, String>(2),
+                r.get_unwrap::<_, String>(3),
+                r.get_unwrap::<_, String>(4),
+                r.get_unwrap::<_, String>(5),
+                r.get_unwrap::<_, String>(6),
+                self.get_keywords(r.get_unwrap::<_, String>(0).as_str())
+                    .unwrap_or_default(),
+            ))
+        })?;
+
+        let dependencies = v3
+            .iter()
+            .map(|f| CrateDependency {
+                crate_id: f.0.clone(),
+                version: f.1.clone(),
+                kind: DependencyKind::parse(f.2.clone()),
+            })
+            .collect::<Vec<CrateDependency>>();
+
+        let fetched_crate_list = crate_info_result
+            .filter(|f| f.is_ok())
+            .map(|f| f.unwrap())
+            .map(|f| Crate {
+                crate_id: f.1,
+                description: f.2,
+                downloads: (f.3).parse().unwrap_or_default(),
+                homepage_url: if f.4.is_empty() { None } else { Some(f.4) },
+                repo_url: if f.5.is_empty() { None } else { Some(f.5) },
+                last_update: f.6,
+                keywords: f.7,
+                dependencies: dependencies.clone(),
+                versions: vec![],
+            });
+        Ok(fetched_crate_list.into_iter().last())
+    }
+
+    fn get_keywords(&self, crate_id: &str) -> Result<Vec<String>, rusqlite::Error> {
+        let mut keywords_q = self.prepare_cached(
+            "SELECT keywords.keyword 
+                FROM keywords 
+                LEFT JOIN crates_keywords
+                    ON keywords.id = crates_keywords.keyword_id
+                WHERE crates_keywords.crate_id = ?",
+        )?;
+        let keywords_result = keywords_q
+            .query_map([crate_id], |r| r.get::<_, String>(0))?
+            .collect();
+        keywords_result
+    }
+}
 
 //Takes  : crate_name
 //Returns: version_id,version number
-
 #[instrument]
 pub fn get_latest(
-    db: &Connection, crate_name: String,
+    db: &Connection,
+    crate_name: String,
 ) -> Result<Vec<(String, String)>, rusqlite::Error> {
     let mut stmt = db.prepare_cached(
         r#"
@@ -36,7 +129,9 @@ pub fn get_latest(
 
 #[instrument]
 pub fn get_latest_dependencies(
-    db: &Connection, crate_name: String, d_type: DependencyType,
+    db: &Connection,
+    crate_name: String,
+    d_type: DependencyType,
 ) -> Result<Vec<(String, String)>, rusqlite::Error> {
     let latest = get_latest(db, crate_name)?;
     let version_id: &str = latest.last().unwrap().0.as_ref();
@@ -54,7 +149,9 @@ pub enum DependencyType {
 //Returns: dependencies.id, crates.name
 #[instrument]
 pub fn get_dependencies(
-    db: &Connection, version_id: &str, d_type: DependencyType,
+    db: &Connection,
+    version_id: &str,
+    d_type: DependencyType,
 ) -> Result<Vec<(String, String)>, rusqlite::Error> {
     let sql_str = r#"
         SELECT dependencies.id, crates.name
@@ -128,7 +225,8 @@ pub fn get_bevy_plugins_naive(db: &Connection) -> Result<Vec<(String, String)>, 
 //Returns: crate.id, crates.name
 #[instrument]
 pub fn get_crate_by_name(
-    db: &Connection, crate_name: &str,
+    db: &Connection,
+    crate_name: &str,
 ) -> Result<Vec<(String, String)>, rusqlite::Error> {
     let mut s = db.prepare_cached("SELECT id, name FROM crates WHERE name = ?")?;
     let rows = s.query_and_then(
@@ -180,7 +278,7 @@ pub fn get_rev_dependency(
                 r.get_unwrap::<_, String>(1),
                 r.get_unwrap::<_, String>(2),
                 r.get_unwrap::<_, String>(3),
-                get_bevy_versions_for_crate(
+                get_versions_for_crate(
                     db,
                     &r.get_unwrap::<_, String>(0),
                     &r.get_unwrap::<_, String>(4),
@@ -232,9 +330,16 @@ fn get_bevy_crates(db: &Connection) -> Result<Vec<(String, String)>, rusqlite::E
     Ok(bevy_crates)
 }
 
+/**
+ Takes a crate_id (cid), versionid (vid) and a tuple of crates (tuple of crate_id and crate name)
+ dependency_crates gets the name of the
+*/
 #[instrument]
-pub fn get_bevy_versions_for_crate(
-    db: &Connection, cid: &str, vid: &str, bevy_crates: &[(String, String)],
+pub fn get_versions_for_crate(
+    db: &Connection,
+    cid: &str,
+    vid: &str,
+    dependency_crates: &[(String, String)],
 ) -> Result<Vec<(String, String)>, rusqlite::Error> {
     let mut s = db.prepare_cached(
         r#"
@@ -244,7 +349,7 @@ pub fn get_bevy_versions_for_crate(
             WHERE versions.crate_id = ? AND versions.id = ? AND dependencies.crate_id = ?
     "#,
     )?;
-    let mvbv: Vec<(String, String)> = bevy_crates
+    let mvbv: Vec<(String, String)> = dependency_crates
         .iter()
         .map(|(bid, name)| -> Result<(String, String), rusqlite::Error> {
             Ok((
@@ -257,122 +362,53 @@ pub fn get_bevy_versions_for_crate(
     Ok(mvbv)
 }
 
-fn get_keywords(db: &Connection, crate_id: String) -> Result<Vec<String>, rusqlite::Error> {
-    let mut s = db.prepare_cached(
-        "SELECT keywords.keyword 
-            FROM keywords 
-            LEFT JOIN crates_keywords
-                ON keywords.id = crates_keywords.keyword_id
-            WHERE crates_keywords.crate_id = ?",
-    )?;
-    let x = s
-        .query_map([crate_id], |r| r.get::<_, String>(0))?
-        .collect();
-    x
-}
-
-pub fn get_crate(db: &Connection, crate_name: &str) -> Result<Option<Crate>, rusqlite::Error> {
-    //Version id, Version num
-    let a = get_latest(db, crate_name.to_string())?;
-    let aa = a.last();
-    if aa.is_none() {
-        return Err(Error::InvalidQuery);
-    }
-    let version_id = &aa.unwrap().0;
-
-    let mut b = db.prepare_cached(
-        "SELECT crates.name, dependencies.req, dependencies.kind
-        FROM dependencies
-        LEFT JOIN crates
-            ON crates.id = dependencies.crate_id 
-        WHERE dependencies.version_id = ?",
-    )?;
-    let b_row = b.query_map([version_id], |r| {
-        Ok((
-            r.get_unwrap::<_, String>(0),
-            r.get_unwrap::<_, String>(1),
-            r.get_unwrap::<_, String>(2),
-        ))
-    })?;
-
-    let v3 = b_row
-        .filter(|f| f.is_ok())
-        .map(|f| f.unwrap())
-        .collect::<Vec<(String, String, String)>>();
-
-    let mut s = db.prepare_cached(
-        "SELECT id, name, description, downloads, homepage, repository, updated_at FROM crates WHERE name = ?",
-    )?;
-    let row = s.query_map([crate_name], |r| {
-        Ok((
-            r.get_unwrap::<_, String>(0),
-            r.get_unwrap::<_, String>(1),
-            r.get_unwrap::<_, String>(2),
-            r.get_unwrap::<_, String>(3),
-            r.get_unwrap::<_, String>(4),
-            r.get_unwrap::<_, String>(5),
-            r.get_unwrap::<_, String>(6),
-            get_keywords(db, r.get_unwrap::<_, String>(0)).unwrap_or_default(),
-        ))
-    })?;
-
-    let c = row
-        .filter(|f| f.is_ok())
-        .map(|f| f.unwrap())
-        .map(|f| Crate {
-            crateid: f.1,
-            disc: f.2,
-            downloads: (f.3).parse().unwrap_or_default(),
-            homepage_url: if f.4.is_empty() { None } else { Some(f.4) },
-            repo_url: if f.5.is_empty() { None } else { Some(f.5) },
-            last_update: f.6,
-            tags: f.7,
-            dependencies: v3.clone(),
-            ..Default::default()
-        });
-    Ok(c.into_iter().last())
-}
-
 #[derive(Default, Debug)]
 pub struct Crate {
-    pub crateid: String,
-    pub tags: Vec<String>,
+    pub crate_id: String,
+    pub keywords: Vec<String>,
     pub versions: Vec<String>,
-    pub disc: String,
+    pub description: String,
     pub downloads: u32,
     pub repo_url: Option<String>,
     pub homepage_url: Option<String>,
     pub last_update: String,
-    pub dependencies: Vec<(String, String, String)>,
+    pub dependencies: Vec<CrateDependency>,
 }
 
-#[cfg(feature = "capture-spantrace")]
-pub fn install_tracing() {
-    use tracing_error::ErrorLayer;
-    use tracing_subscriber::prelude::*;
-    use tracing_subscriber::{fmt, EnvFilter};
-
-    let fmt_layer = fmt::layer().with_target(false);
-    let filter_layer = EnvFilter::try_from_default_env()
-        .or_else(|_| EnvFilter::try_new("info"))
-        .unwrap();
-
-    tracing_subscriber::registry()
-        .with(filter_layer)
-        .with(fmt_layer)
-        .with(ErrorLayer::default())
-        .init();
+#[derive(PartialEq, Debug, Clone)]
+pub enum DependencyKind {
+    Normal,
+    Dev,
+    Unknown,
 }
 
-#[instrument]
-fn read_file(path: &str) -> Result<(), Report> {
-    info!("Reading file");
-    Ok(std::fs::read_to_string(path).map(drop)?)
+impl Default for DependencyKind {
+    fn default() -> Self {
+        Self::Unknown
+    }
 }
 
-#[instrument]
-fn read_config() -> Result<(), Report> {
-    read_file("fake_file")
-        .wrap_err("Unable to read config")
-        .suggestion("Double-check that the file exist in the current path")
+trait Parse {
+    fn parse(kind_num: String) -> DependencyKind;
+}
+
+impl Parse for DependencyKind {
+    fn parse(kind_num: String) -> DependencyKind {
+        let int: Result<i32, ParseIntError> = kind_num.parse();
+        match int {
+            Ok(x) => match x {
+                0 => DependencyKind::Normal,
+                2 => DependencyKind::Dev,
+                _ => DependencyKind::Unknown,
+            },
+            Err(_) => DependencyKind::Unknown,
+        }
+    }
+}
+
+#[derive(Default, Debug, Clone)]
+pub struct CrateDependency {
+    pub crate_id: String,
+    pub version: String,
+    pub kind: DependencyKind,
 }

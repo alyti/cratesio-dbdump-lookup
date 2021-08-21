@@ -1,10 +1,10 @@
-use color_eyre::Report;
+use color_eyre::eyre::Report;
 use cratesio_dbdump_csvtab::CratesIODumpLoader;
+use populate_crate_metadata::DependencyType;
 use populate_crate_metadata::{
     crate_list_get_rev_dependency, get_bevy_plugins_naive, get_crate_by_name, get_latest,
-    get_latest_dependencies, get_rev_dependency,
+    get_latest_dependencies, get_rev_dependency, CrateFetcher,
 };
-use populate_crate_metadata::{get_crate, install_tracing, DependencyType};
 use tracing::info;
 
 fn main() -> Result<(), Report> {
@@ -15,7 +15,14 @@ fn main() -> Result<(), Report> {
 
     // Load dump from a .tar.gz archive.
     let db = CratesIODumpLoader::default()
-        .minimal()
+        //minimal() does not work for get_crate if you want keywords to be included
+        .tables(&[
+            "crates",
+            "dependencies",
+            "versions",
+            "crates_keywords",
+            "keywords",
+        ])
         .preload(true)
         .update()?
         .open_db()?;
@@ -54,7 +61,7 @@ fn main() -> Result<(), Report> {
     );
 
     info!(
-        "Get rev dependencies 3: {:?}",
+        "Get crate list of rev dependencies 3: {:?}",
         crate_list_get_rev_dependency(
             &db,
             vec!["bevy_retrograde_physics", "bevy_ninepatch"],
@@ -62,8 +69,26 @@ fn main() -> Result<(), Report> {
         )
     );
 
-    let c = get_crate(&db, "bevy_config_cam");
-    println!("get_crate: {:?}", c);
+    let c = db.get_crate("bevy_config_cam");
+    info!("Get Crate: {:?}", c);
 
     Ok(())
+}
+
+#[cfg(feature = "capture-spantrace")]
+pub fn install_tracing() {
+    use tracing_error::ErrorLayer;
+    use tracing_subscriber::prelude::*;
+    use tracing_subscriber::{fmt, EnvFilter};
+
+    let fmt_layer = fmt::layer().with_target(false);
+    let filter_layer = EnvFilter::try_from_default_env()
+        .or_else(|_| EnvFilter::try_new("info"))
+        .unwrap();
+
+    tracing_subscriber::registry()
+        .with(filter_layer)
+        .with(fmt_layer)
+        .with(ErrorLayer::default())
+        .init();
 }
